@@ -27,7 +27,6 @@
       "expo-router",
       "expo-sqlite"
     ],
-    "scheme": "ledger",
-    "newArchEnabled": true
+    "scheme": "ledger"
   }
 }

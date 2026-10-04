@@ -1,61 +1,73 @@
-'use client';
-
 import React from 'react';
-import { Text, TouchableOpacity, View, StyleSheet } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View, type PressableProps } from 'react-native';
 
-interface ButtonProps extends React.ComponentPropsWithoutRef<typeof TouchableOpacity> {
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
+type Variant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
+
+interface ButtonProps extends Omit<PressableProps, 'children'> {
+  variant?: Variant;
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
+  icon?: React.ReactNode;
+  className?: string;
   children: React.ReactNode;
 }
 
-export function Button({ 
-  variant = 'primary', 
-  size = 'md', 
-  loading = false, 
-  disabled, 
-  children, 
-  className: customClass,
-  ...props 
-}: ButtonProps) {
-  const baseStyles = 'flex-row items-center justify-center rounded-lg font-medium transition-colors';
-  
-  const variants = {
-    primary: 'bg-primary-500 text-white active:bg-primary-600 disabled:bg-primary-300',
-    secondary: 'bg-gray-200 text-gray-900 active:bg-gray-300 disabled:bg-gray-100',
-    outline: 'border-2 border-primary-500 text-primary-500 active:bg-primary-50 disabled:border-primary-300 disabled:text-primary-300',
-    ghost: 'text-primary-500 active:bg-primary-50 disabled:text-primary-300',
-    danger: 'bg-red-500 text-white active:bg-red-600 disabled:bg-red-300',
-  };
-  
-  const sizes = {
-    sm: 'px-3 py-1.5 text-sm',
-    md: 'px-4 py-2 text-base',
-    lg: 'px-6 py-3 text-lg',
-  };
+// Text colour must be set on <Text>; React Native does not inherit it from the pressable.
+const container: Record<Variant, string> = {
+  primary: 'bg-primary-600 active:bg-primary-700',
+  secondary: 'bg-gray-100 active:bg-gray-200',
+  outline: 'border border-gray-300 bg-white active:bg-gray-50',
+  ghost: 'active:bg-gray-100',
+  danger: 'bg-red-600 active:bg-red-700',
+};
 
+const label: Record<Variant, string> = {
+  primary: 'text-white',
+  secondary: 'text-gray-900',
+  outline: 'text-gray-900',
+  ghost: 'text-primary-700',
+  danger: 'text-white',
+};
+
+const sizes = {
+  sm: { box: 'px-3 py-1.5 rounded-md', text: 'text-sm' },
+  md: { box: 'px-4 py-2.5 rounded-lg', text: 'text-base' },
+  lg: { box: 'px-5 py-3.5 rounded-xl', text: 'text-lg' },
+};
+
+export function Button({
+  variant = 'primary',
+  size = 'md',
+  loading = false,
+  disabled,
+  icon,
+  className,
+  children,
+  ...props
+}: ButtonProps) {
+  const isDisabled = disabled || loading;
   return (
-    <TouchableOpacity
+    <Pressable
       {...props}
-      disabled={disabled || loading}
-      className={`${baseStyles} ${variants[variant]} ${sizes[size]} ${customClass || ''}`}
+      disabled={isDisabled}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !!isDisabled }}
+      className={`flex-row items-center justify-center ${container[variant]} ${sizes[size].box} ${
+        isDisabled ? 'opacity-40' : ''
+      } ${className ?? ''}`}
     >
       {loading ? (
-        <View className="flex-row items-center gap-2">
-          <View
-            className="w-4 h-4 border-2 border-current border-t-transparent rounded-full"
-            style={styles.spinner}
-          />
-          <Text>Loading...</Text>
-        </View>
+        <ActivityIndicator color={variant === 'primary' || variant === 'danger' ? '#fff' : '#111'} />
       ) : (
-        <Text>{children}</Text>
+        <View className="flex-row items-center gap-1.5">
+          {icon}
+          {typeof children === 'string' ? (
+            <Text className={`font-semibold ${label[variant]} ${sizes[size].text}`}>{children}</Text>
+          ) : (
+            children
+          )}
+        </View>
       )}
-    </TouchableOpacity>
+    </Pressable>
   );
 }
-
-const styles = StyleSheet.create({
-  spinner: {},
-});

@@ -1,78 +1,43 @@
-'use client';
-
 import React from 'react';
-import { TextInput, Text, View, StyleSheet } from 'react-native';
+import { Text, TextInput, View, type TextInputProps } from 'react-native';
 
-interface InputProps extends React.ComponentPropsWithoutRef<typeof TextInput> {
+interface InputProps extends TextInputProps {
   label?: string;
   error?: string;
   helperText?: string;
-  leftIcon?: React.ReactNode;
-  rightIcon?: React.ReactNode;
+  right?: React.ReactNode;
+  containerClassName?: string;
+  className?: string;
 }
 
-export function Input({ 
-  label, 
-  error, 
-  helperText, 
-  leftIcon, 
-  rightIcon, 
-  className: customClass,
-  style,
-  ...props 
-}: InputProps) {
-  const inputRef = React.useRef<TextInput>(null);
-  
+export function Input({ label, error, helperText, right, containerClassName, className, editable, ...props }: InputProps) {
   return (
-    <View className={`w-full ${customClass || ''}`}>
-      {label && (
-        <Text className="text-sm font-medium text-gray-700 mb-1">{label}</Text>
-      )}
-      <View className="relative">
-        {leftIcon && (
-          <View className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10">
-            {leftIcon}
-          </View>
-        )}
+    <View className={`w-full ${containerClassName ?? ''}`}>
+      {label ? <FieldLabel>{label}</FieldLabel> : null}
+      <View
+        className={`flex-row items-center rounded-lg border bg-white ${
+          error ? 'border-red-500' : 'border-gray-300'
+        } ${editable === false ? 'bg-gray-100' : ''}`}
+      >
         <TextInput
-          ref={inputRef}
+          placeholderTextColor="#9ca3af"
+          editable={editable}
           {...props}
-          style={[
-            styles.input,
-            leftIcon && styles.withLeftIcon,
-            rightIcon && styles.withRightIcon,
-            error && styles.error,
-            style,
-          ]}
-          className={`bg-white border rounded-lg text-gray-900 placeholder-gray-400 
-            focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20
-            disabled:bg-gray-100 disabled:text-gray-500
-            ${error ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20' : ''}
-            ${customClass || ''}`}
+          className={`flex-1 px-3 py-2.5 text-base text-gray-900 ${className ?? ''}`}
         />
-        {rightIcon && (
-          <View className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 z-10">
-            {rightIcon}
-          </View>
-        )}
+        {right ? <View className="pr-3">{right}</View> : null}
       </View>
-      {error && <Text className="text-sm text-red-500 mt-1">{error}</Text>}
-      {helperText && !error && <Text className="text-sm text-gray-500 mt-1">{helperText}</Text>}
+      <FieldHint error={error} helperText={helperText} />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  input: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-  },
-  withLeftIcon: {
-    paddingLeft: 40,
-  },
-  withRightIcon: {
-    paddingRight: 40,
-  },
-  error: {},
-});
+export function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <Text className="mb-1 text-sm font-medium text-gray-700">{children}</Text>;
+}
+
+export function FieldHint({ error, helperText }: { error?: string; helperText?: string }) {
+  if (error) return <Text className="mt-1 text-sm text-red-600">{error}</Text>;
+  if (helperText) return <Text className="mt-1 text-xs text-gray-500">{helperText}</Text>;
+  return null;
+}
