@@ -1,5 +1,6 @@
+import type { AccountSubtype, AccountType } from '../domain/types';
 import type { Db } from './client';
-import { seedChartOfAccounts } from './seed';
+import { groupForSubtype, seedChartOfAccounts, seedMoneyManagerChart } from './seed';
 
 export const DB_NAME = 'ledger.db';
 export const DEFAULT_BASE_CURRENCY = 'SGD';
@@ -93,11 +94,88 @@ CREATE TABLE audit_log (
 CREATE INDEX idx_audit_entity ON audit_log(entity, entity_id);
 `;
 
+// v2: Money Manager-style expense tracker features.
+const V2 = `
+ALTER TABLE accounts ADD COLUMN icon TEXT;
+ALTER TABLE accounts ADD COLUMN grp TEXT;
+ALTER TABLE accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN statement_day INTEGER CHECK (statement_day BETWEEN 1 AND 31);
+ALTER TABLE accounts ADD COLUMN payment_day INTEGER CHECK (payment_day BETWEEN 1 AND 31);
+ALTER TABLE accounts ADD COLUMN payment_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL;
+ALTER TABLE accounts ADD COLUMN include_in_totals INTEGER NOT NULL DEFAULT 1 CHECK (include_in_totals IN (0,1));
+
+ALTER TABLE transactions ADD COLUMN time TEXT CHECK (time IS NULL OR time GLOB '[0-2][0-9]:[0-5][0-9]');
+ALTER TABLE transactions ADD COLUMN recurrence_id INTEGER REFERENCES recurrences(id) ON DELETE SET NULL;
+ALTER TABLE transactions ADD COLUMN installment TEXT;
+
+CREATE TABLE budgets (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  month      TEXT NOT NULL DEFAULT '',   -- 'YYYY-MM' override, '' = every month
+  amount     INTEGER NOT NULL CHECK (amount >= 0),
+  UNIQUE (account_id, month)
+);
+
+CREATE TABLE recurrences (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind          TEXT NOT NULL CHECK (kind IN ('payment','receipt','transfer')),
+  template_json TEXT NOT NULL,
+  freq          TEXT NOT NULL CHECK (freq IN ('daily','weekly','biweekly','monthly','month_end','yearly')),
+  start_date    TEXT NOT NULL,
+  end_date      TEXT,
+  posted_count  INTEGER NOT NULL DEFAULT 0,
+  active        INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE favorites (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  kind          TEXT NOT NULL CHECK (kind IN ('payment','receipt','transfer')),
+  template_json TEXT NOT NULL,
+  sort_order    INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE attachments (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+  uri            TEXT NOT NULL,
+  created_at     TEXT NOT NULL
+);
+CREATE INDEX idx_attachments_transaction ON attachments(transaction_id);
+CREATE INDEX idx_transactions_recurrence ON transactions(recurrence_id);
+`;
+
 const MIGRATIONS: ((db: Db) => void)[] = [
   (db) => {
     db.execSync(V1);
     db.runSync('INSERT INTO settings (key, value) VALUES (?, ?)', ['base_currency', DEFAULT_BASE_CURRENCY]);
     seedChartOfAccounts(db, DEFAULT_BASE_CURRENCY);
+  },
+  (db) => {
+    db.execSync(V2);
+    const base =
+      db.getFirstSync<{ value: string }>(`SELECT value FROM settings WHERE key = 'base_currency'`, [])?.value ??
+      DEFAULT_BASE_CURRENCY;
+    const used = db.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM entries', [])!.n > 0;
+    if (!used) {
+      seedMoneyManagerChart(db, base);
+    } else {
+      // Keep the existing chart; give balance-sheet accounts a Money Manager group.
+      const rows = db.getAllSync<{ id: number; type: AccountType; subtype: AccountSubtype }>(
+        `SELECT id, type, subtype FROM accounts WHERE type IN ('asset','liability') AND is_placeholder = 0`,
+        []
+      );
+      for (const r of rows) db.runSync('UPDATE accounts SET grp = ? WHERE id = ?', [groupForSubtype(r.type, r.subtype), r.id]);
+    }
+    for (const [k, v] of [
+      ['month_start_day', '1'],
+      ['week_start', '0'],
+      ['passcode_enabled', '0'],
+    ]) {
+      db.runSync('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', [k, v]);
+    }
   },
 ];
 
@@ -133,13 +211,13 @@ function setAsideUnversionedTables(db: Db): void {
 }
 
 /** Bring the database up to the latest schema. Safe to call on every launch. */
-export function migrate(db: Db): void {
+export function migrate(db: Db, targetVersion = MIGRATIONS.length): void {
   db.execSync('PRAGMA journal_mode = WAL;');
   db.execSync('PRAGMA foreign_keys = ON;');
   const row = db.getFirstSync<{ user_version: number }>('PRAGMA user_version', []);
   let version = row?.user_version ?? 0;
   if (version === 0) setAsideUnversionedTables(db);
-  while (version < MIGRATIONS.length) {
+  while (version < targetVersion) {
     const step = MIGRATIONS[version];
     db.withTransactionSync(() => {
       step(db);

@@ -149,16 +149,20 @@ export function createTransaction(db: Db, input: TransactionInput, opts: { rever
     const now = nowStamp();
     const reference = input.reference?.trim() || consumeReference(db, input.kind);
     id = db.runSync(
-      `INSERT INTO transactions (date, kind, reference, payee_id, description, memo, status, reverses_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?)`,
+      `INSERT INTO transactions (date, time, kind, reference, payee_id, description, memo, status, reverses_id,
+         recurrence_id, installment, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?, ?, ?)`,
       [
         input.date,
+        input.time || null,
         input.kind,
         reference,
         input.payee_id ?? null,
         input.description.trim(),
         input.memo?.trim() || null,
         opts.reversesId ?? null,
+        input.recurrence_id ?? null,
+        input.installment ?? null,
         now,
         now,
       ]
@@ -184,9 +188,10 @@ export function updateTransaction(db: Db, id: number, input: TransactionInput): 
   assertValid(db, input);
   db.withTransactionSync(() => {
     db.runSync(
-      `UPDATE transactions SET date = ?, reference = ?, payee_id = ?, description = ?, memo = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE transactions SET date = ?, time = ?, reference = ?, payee_id = ?, description = ?, memo = ?, updated_at = ? WHERE id = ?`,
       [
         input.date,
+        input.time || null,
         input.reference?.trim() || before.reference,
         input.payee_id ?? null,
         input.description.trim(),
@@ -254,6 +259,7 @@ export function getReversals(db: Db, id: number): Transaction[] {
 export function toInput(tx: TransactionDetail): TransactionInput {
   return {
     date: tx.date,
+    time: tx.time,
     kind: tx.kind,
     reference: tx.reference,
     payee_id: tx.payee_id,

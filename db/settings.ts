@@ -8,6 +8,11 @@ export interface Settings {
   /** Transactions dated on or before this are locked. Empty = no lock. */
   lockDate: string;
   onboarded: boolean;
+  /** Day of month a "month" starts (1–28), e.g. payday. */
+  monthStartDay: number;
+  /** 0 = Sunday, 1 = Monday. */
+  weekStart: 0 | 1;
+  passcodeEnabled: boolean;
 }
 
 export function getSetting(db: Db, key: string): string | null {
@@ -29,6 +34,9 @@ export function getSettings(db: Db): Settings {
     ownerName: m.get('owner_name') ?? '',
     lockDate: m.get('lock_date') ?? '',
     onboarded: m.get('onboarded') === '1',
+    monthStartDay: Math.min(28, Math.max(1, Number(m.get('month_start_day') ?? '1') || 1)),
+    weekStart: m.get('week_start') === '1' ? 1 : 0,
+    passcodeEnabled: m.get('passcode_enabled') === '1',
   };
 }
 

@@ -29,14 +29,14 @@ function setup() {
 function seedActivity(db: Db, a: (code: string) => Account) {
   const base = 'SGD';
   const obe = a(SYSTEM_CODES.openingEquity);
-  const bank = a('1100');
+  const bank = a('1110');
   const card = a('2010');
   const usdId = createAccount(db, {
     code: '1120',
     name: 'USD Account',
     type: 'asset',
     subtype: 'bank',
-    parent_id: a('1000').id,
+    parent_id: null,
     currency: 'USD',
     is_placeholder: false,
   });
@@ -59,7 +59,7 @@ function seedActivity(db: Db, a: (code: string) => Account) {
     date: '2025-06-30',
     kind: 'receipt',
     description: 'Freelance',
-    entries: buildReceipt({ baseCurrency: base, money: bank, lines: [{ account: a('4800'), amount: 20000 }] }),
+    entries: buildReceipt({ baseCurrency: base, money: bank, lines: [{ account: a('4090'), amount: 20000 }] }),
   });
   createTransaction(db, {
     date: '2026-01-25',
@@ -77,8 +77,8 @@ function seedActivity(db: Db, a: (code: string) => Account) {
       baseCurrency: base,
       money: card,
       lines: [
-        { account: a('5110'), amount: 8650 },
-        { account: a('5720'), amount: 2000 },
+        { account: a('5011'), amount: 8650 },
+        { account: a('5070'), amount: 2000 },
       ],
     }),
   });
@@ -104,7 +104,7 @@ describe('schema and seed', () => {
     const { db } = setup();
     migrate(db);
     const accounts = listAccounts(db);
-    expect(accounts.length).toBeGreaterThan(40);
+    expect(accounts.length).toBeGreaterThan(30);
     for (const code of Object.values(SYSTEM_CODES)) expect(getAccountByCode(db, code)).not.toBeNull();
     expect(getSettings(db).baseCurrency).toBe('SGD');
   });
@@ -125,7 +125,7 @@ describe('schema and seed', () => {
       INSERT INTO accounts (code, name, type) VALUES ('1000', 'Cash', 'asset');
     `);
     migrate(db);
-    expect(listAccounts(db).length).toBeGreaterThan(40);
+    expect(listAccounts(db).length).toBeGreaterThan(30);
     expect(db.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM legacy_accounts', [])!.n).toBe(1);
     expect(getSettings(db).baseCurrency).toBe('SGD');
     migrate(db); // second launch is a no-op
@@ -134,13 +134,13 @@ describe('schema and seed', () => {
   it('changes base currency before any transactions only', () => {
     const { db, a } = setup();
     setBaseCurrency(db, 'MYR');
-    expect(a('1100').currency).toBe('MYR');
-    expect(a('5110').currency).toBe('MYR');
+    expect(a('1110').currency).toBe('MYR');
+    expect(a('5011').currency).toBe('MYR');
     createTransaction(db, {
       date: '2026-01-01',
       kind: 'opening',
       description: '',
-      entries: buildOpeningBalance({ baseCurrency: 'MYR', account: a('1100'), amount: 100, openingEquity: a('3000') }),
+      entries: buildOpeningBalance({ baseCurrency: 'MYR', account: a('1110'), amount: 100, openingEquity: a('3000') }),
     });
     expect(() => setBaseCurrency(db, 'SGD')).toThrow();
   });
@@ -151,12 +151,12 @@ describe('schema and seed', () => {
       date: '2026-01-01',
       kind: 'journal',
       description: '',
-      entries: buildOpeningBalance({ baseCurrency: 'SGD', account: a('1100'), amount: 100, openingEquity: a('3000') }),
+      entries: buildOpeningBalance({ baseCurrency: 'SGD', account: a('1110'), amount: 100, openingEquity: a('3000') }),
     });
     expect(() =>
       db.runSync(
         'INSERT INTO entries (transaction_id, line_no, account_id, debit, credit, currency, fx_amount) VALUES (?,?,?,?,?,?,?)',
-        [id, 9, a('1100').id, 5, 5, 'SGD', 5]
+        [id, 9, a('1110').id, 5, 5, 'SGD', 5]
       )
     ).toThrow();
   });
@@ -172,7 +172,7 @@ describe('posting rules', () => {
 
   it('rejects unbalanced entries, header accounts and locked periods', () => {
     const { db, a } = setup();
-    const bank = a('1100');
+    const bank = a('1110');
     const line = (account: Account, debit: number, credit: number) => ({
       account_id: account.id,
       debit,
@@ -182,10 +182,11 @@ describe('posting rules', () => {
       fx_rate: '1',
     });
     expect(() =>
-      createTransaction(db, { date: '2026-01-01', kind: 'journal', description: '', entries: [line(bank, 100, 0), line(a('5110'), 0, 99)] })
+      createTransaction(db, { date: '2026-01-01', kind: 'journal', description: '', entries: [line(bank, 100, 0), line(a('5011'), 0, 99)] })
     ).toThrow(/balance/);
+    createAccount(db, { code: '1900', name: 'Header', type: 'asset', subtype: 'general', parent_id: null, currency: 'SGD', is_placeholder: true });
     expect(() =>
-      createTransaction(db, { date: '2026-01-01', kind: 'journal', description: '', entries: [line(a('1000'), 100, 0), line(a('5110'), 0, 100)] })
+      createTransaction(db, { date: '2026-01-01', kind: 'journal', description: '', entries: [line(a('1900'), 100, 0), line(a('5011'), 0, 100)] })
     ).toThrow(/header/);
     setSetting(db, 'lock_date', '2026-01-31');
     expect(() =>
@@ -198,7 +199,7 @@ describe('posting rules', () => {
     const { db, a } = setup();
     seedActivity(db, a);
     const p = db.getFirstSync<{ default_account_id: number }>(`SELECT default_account_id FROM payees WHERE name = 'FairPrice'`, []);
-    expect(p?.default_account_id).toBe(a('5110').id);
+    expect(p?.default_account_id).toBe(a('5011').id);
   });
 
   it('edits write an audit trail; void removes from balances; reversal nets to zero', () => {
@@ -263,7 +264,7 @@ describe('reports', () => {
     expect(pl.netIncome).toBe(589350);
     expect(pl.compareNetIncome).toBe(0);
     // Header rows roll up children.
-    const food = pl.expenses.rows.find((r) => r.code === '5100')!;
+    const food = pl.expenses.rows.find((r) => r.code === '5010')!;
     expect(food).toMatchObject({ isHeader: true, amount: 8650 });
   });
 
@@ -285,7 +286,7 @@ describe('reports', () => {
     expect(listTransactions(db, { search: 'fairprice' })).toHaveLength(1);
     expect(listTransactions(db, { search: 'Groceries' })).toHaveLength(1);
     expect(listTransactions(db, { search: '106.50' })).toHaveLength(1);
-    expect(listTransactions(db, { accountId: a('1100').id })).toHaveLength(4);
+    expect(listTransactions(db, { accountId: a('1110').id })).toHaveLength(4);
   });
 });
 
@@ -315,10 +316,10 @@ describe('accounts', () => {
     expect(() =>
       createAccount(db, { code: '5999', name: 'USD expense', type: 'expense', subtype: 'general', parent_id: null, currency: 'USD', is_placeholder: false })
     ).toThrow(/base currency/);
-    expect(() => deleteAccount(db, a('1100').id)).toThrow(/Deactivate/);
+    expect(() => deleteAccount(db, a('1110').id)).toThrow(/Deactivate/);
     expect(() => deleteAccount(db, requireAccountByCode(db, '4900').id)).toThrow(/used by the app/);
-    deleteAccount(db, a('5500').id);
-    expect(getAccountByCode(db, '5500')).toBeNull();
+    deleteAccount(db, a('5100').id);
+    expect(getAccountByCode(db, '5100')).toBeNull();
   });
 });
 

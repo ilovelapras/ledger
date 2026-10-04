@@ -26,7 +26,6 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
-    ".expo/types/**/*.ts",
     "global.d.ts",
     "nativewind-env.d.ts"
   ]

@@ -29,6 +29,16 @@ export interface Account {
   notes: string | null;
   is_active: number;
   created_at: string;
+  /** Emoji shown for categories and accounts. */
+  icon: string | null;
+  /** Money Manager account group (cash, accounts, card, …); null for categories. */
+  grp: string | null;
+  sort_order: number;
+  /** Credit cards: day of month the statement closes / payment is due. */
+  statement_day: number | null;
+  payment_day: number | null;
+  payment_account_id: number | null;
+  include_in_totals: number;
 }
 
 export type TxKind = 'payment' | 'receipt' | 'transfer' | 'journal' | 'opening' | 'reversal';
@@ -48,6 +58,11 @@ export interface Transaction {
   reverses_id: number | null;
   created_at: string;
   updated_at: string;
+  /** Optional HH:MM. */
+  time: string | null;
+  recurrence_id: number | null;
+  /** "k/N" for instalment purchases. */
+  installment: string | null;
 }
 
 export interface Entry {
@@ -82,6 +97,9 @@ export interface EntryInput {
 
 export interface TransactionInput {
   date: string;
+  time?: string | null;
+  recurrence_id?: number | null;
+  installment?: string | null;
   kind: TxKind;
   reference?: string | null;
   payee_id?: number | null;

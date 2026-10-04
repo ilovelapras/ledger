@@ -33,15 +33,12 @@ export function isBalanceSheetType(type: AccountType): boolean {
   return type === 'asset' || type === 'liability' || type === 'equity';
 }
 
-/** Accounts that hold money and appear as the "from"/"into" side of payments, receipts and transfers. */
-export function isMoneyAccount(a: Pick<Account, 'subtype' | 'type'>): boolean {
-  return (
-    a.subtype === 'bank' ||
-    a.subtype === 'cash' ||
-    a.subtype === 'credit_card' ||
-    a.subtype === 'loan' ||
-    a.subtype === 'investment'
-  );
+/**
+ * Accounts that hold money (Money Manager's "Accounts": cash, bank, cards, loans…) and can be the
+ * "from"/"into" side of income, expenses and transfers.
+ */
+export function isMoneyAccount(a: Pick<Account, 'type' | 'is_placeholder'>): boolean {
+  return (a.type === 'asset' || a.type === 'liability') && !a.is_placeholder;
 }
 
 export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {

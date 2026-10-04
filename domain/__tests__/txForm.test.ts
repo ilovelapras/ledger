@@ -6,6 +6,7 @@ function mk(id: number, code: string, name: string, type: Account['type'], curre
   return {
     id, code, name, type, currency, subtype: 'general', parent_id: null, is_placeholder: 0,
     institution: null, account_no: null, notes: null, is_active: 1, created_at: '',
+    icon: null, grp: null, sort_order: 0, statement_day: null, payment_day: null, payment_account_id: null, include_in_totals: 1,
   };
 }
 

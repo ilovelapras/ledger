@@ -25,7 +25,22 @@
     },
     "plugins": [
       "expo-router",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Ledger attaches receipt photos you choose to transactions.",
+          "cameraPermission": "Ledger lets you photograph receipts.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Ledger uses Face ID to unlock your books."
+        }
+      ]
     ],
     "scheme": "ledger"
   }

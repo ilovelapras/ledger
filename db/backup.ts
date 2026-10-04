@@ -4,7 +4,19 @@ import { SCHEMA_VERSION } from './schema';
 import { getSettings } from './settings';
 
 // Order matters: parents before children on restore, reverse on wipe.
-const TABLES = ['settings', 'accounts', 'payees', 'transactions', 'reconciliations', 'entries', 'audit_log'] as const;
+const TABLES = [
+  'settings',
+  'accounts',
+  'payees',
+  'recurrences',
+  'transactions',
+  'reconciliations',
+  'entries',
+  'budgets',
+  'favorites',
+  'attachments',
+  'audit_log',
+] as const;
 
 export interface Backup {
   app: 'ledger';
@@ -24,7 +36,11 @@ export function restoreBackup(db: Db, data: unknown): void {
   const b = data as Backup;
   if (!b || b.app !== 'ledger' || typeof b.tables !== 'object') throw new LedgerError('This is not a Ledger backup file.');
   if (b.schemaVersion > SCHEMA_VERSION) throw new LedgerError('This backup is from a newer version of the app.');
-  for (const t of TABLES) if (!Array.isArray(b.tables[t])) throw new LedgerError(`Backup is missing "${t}".`);
+  for (const t of TABLES) {
+    // Tables added after the backup was made are simply empty.
+    if (b.tables[t] === undefined && b.schemaVersion < SCHEMA_VERSION) b.tables[t] = [];
+    if (!Array.isArray(b.tables[t])) throw new LedgerError(`Backup is missing "${t}".`);
+  }
   db.execSync('PRAGMA foreign_keys = OFF;');
   try {
     db.withTransactionSync(() => {

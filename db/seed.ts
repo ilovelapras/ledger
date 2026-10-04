@@ -71,7 +71,119 @@ export const DEFAULT_CHART: SeedAccount[] = [
   { code: '5900', name: 'Exchange Loss', type: 'expense' },
 ];
 
-/** Accounts the app relies on by code. */
+/** Money Manager account groups. Card, overdraft and loan hold what you owe (liabilities). */
+export const ACCOUNT_GROUPS = [
+  { key: 'cash', label: 'Cash', type: 'asset', subtype: 'cash', icon: '💵' },
+  { key: 'accounts', label: 'Accounts', type: 'asset', subtype: 'bank', icon: '🏦' },
+  { key: 'card', label: 'Card', type: 'liability', subtype: 'credit_card', icon: '💳' },
+  { key: 'debit_card', label: 'Debit Card', type: 'asset', subtype: 'bank', icon: '💳' },
+  { key: 'savings', label: 'Savings', type: 'asset', subtype: 'bank', icon: '🐖' },
+  { key: 'prepaid', label: 'Top-Up/Prepaid', type: 'asset', subtype: 'cash', icon: '📱' },
+  { key: 'investments', label: 'Investments', type: 'asset', subtype: 'investment', icon: '📈' },
+  { key: 'overdraft', label: 'Overdrafts', type: 'liability', subtype: 'loan', icon: '🧾' },
+  { key: 'loan', label: 'Loan', type: 'liability', subtype: 'loan', icon: '🏛️' },
+  { key: 'insurance', label: 'Insurance', type: 'asset', subtype: 'general', icon: '🛡️' },
+  { key: 'others', label: 'Others', type: 'asset', subtype: 'general', icon: '📁' },
+] as const satisfies readonly { key: string; label: string; type: AccountType; subtype: AccountSubtype; icon: string }[];
+
+export type AccountGroup = (typeof ACCOUNT_GROUPS)[number]['key'];
+
+export function groupInfo(key: string | null | undefined) {
+  return ACCOUNT_GROUPS.find((g) => g.key === key) ?? ACCOUNT_GROUPS[ACCOUNT_GROUPS.length - 1];
+}
+
+/** Map a v1 subtype to a Money Manager group (used when upgrading books that already have transactions). */
+export function groupForSubtype(type: AccountType, subtype: AccountSubtype): AccountGroup {
+  if (type === 'liability') return subtype === 'credit_card' ? 'card' : 'loan';
+  switch (subtype) {
+    case 'cash': return 'cash';
+    case 'bank': return 'accounts';
+    case 'investment': return 'investments';
+    default: return 'others';
+  }
+}
+
+interface MMSeed {
+  code: string;
+  name: string;
+  type: AccountType;
+  icon: string;
+  parent?: string;
+  group?: AccountGroup;
+}
+
+// Money Manager's default categories and accounts.
+export const MM_CHART: MMSeed[] = [
+  { code: '1010', name: 'Cash', type: 'asset', icon: '💵', group: 'cash' },
+  { code: '1110', name: 'Bank Account', type: 'asset', icon: '🏦', group: 'accounts' },
+  { code: '2010', name: 'Card', type: 'liability', icon: '💳', group: 'card' },
+
+  { code: '4010', name: 'Salary', type: 'income', icon: '💰' },
+  { code: '4020', name: 'Bonus', type: 'income', icon: '🎉' },
+  { code: '4030', name: 'Allowance', type: 'income', icon: '👛' },
+  { code: '4040', name: 'Petty Cash', type: 'income', icon: '🪙' },
+  { code: '4090', name: 'Other', type: 'income', icon: '📥' },
+
+  { code: '5010', name: 'Food', type: 'expense', icon: '🍜' },
+  { code: '5011', name: 'Groceries', type: 'expense', icon: '🛒', parent: '5010' },
+  { code: '5012', name: 'Eating Out', type: 'expense', icon: '🍽️', parent: '5010' },
+  { code: '5013', name: 'Drinks', type: 'expense', icon: '🧋', parent: '5010' },
+  { code: '5020', name: 'Social Life', type: 'expense', icon: '🥂' },
+  { code: '5030', name: 'Pets', type: 'expense', icon: '🐶' },
+  { code: '5040', name: 'Transport', type: 'expense', icon: '🚌' },
+  { code: '5041', name: 'Public Transport', type: 'expense', icon: '🚇', parent: '5040' },
+  { code: '5042', name: 'Taxi', type: 'expense', icon: '🚕', parent: '5040' },
+  { code: '5043', name: 'Fuel', type: 'expense', icon: '⛽', parent: '5040' },
+  { code: '5044', name: 'Parking', type: 'expense', icon: '🅿️', parent: '5040' },
+  { code: '5050', name: 'Culture', type: 'expense', icon: '🎬' },
+  { code: '5060', name: 'Household', type: 'expense', icon: '🏠' },
+  { code: '5061', name: 'Rent', type: 'expense', icon: '🔑', parent: '5060' },
+  { code: '5062', name: 'Utilities', type: 'expense', icon: '💡', parent: '5060' },
+  { code: '5063', name: 'Supplies', type: 'expense', icon: '🧻', parent: '5060' },
+  { code: '5070', name: 'Apparel', type: 'expense', icon: '👕' },
+  { code: '5080', name: 'Beauty', type: 'expense', icon: '💄' },
+  { code: '5090', name: 'Health', type: 'expense', icon: '💊' },
+  { code: '5100', name: 'Education', type: 'expense', icon: '📚' },
+  { code: '5110', name: 'Gift', type: 'expense', icon: '🎁' },
+  { code: '5190', name: 'Other', type: 'expense', icon: '📦' },
+];
+
+/** System accounts kept from v1 (codes unchanged) with Money Manager-friendly names/icons. */
+const MM_SYSTEM: { code: string; name: string; icon: string }[] = [
+  { code: '3000', name: 'Opening Balance Equity', icon: '⚖️' },
+  { code: '3100', name: 'Retained Earnings', icon: '⚖️' },
+  { code: '4900', name: 'Exchange Gain', icon: '💱' },
+  { code: '5810', name: 'Fees', icon: '🏧' },
+  { code: '5900', name: 'Exchange Loss', icon: '💱' },
+];
+
+/**
+ * Replace the v1 accounting chart with Money Manager's defaults. Only called when no transaction exists.
+ * System accounts keep their ids so nothing that references them breaks.
+ */
+export function seedMoneyManagerChart(db: Db, baseCurrency: string): void {
+  const keep = MM_SYSTEM.map((s) => s.code);
+  db.runSync('DELETE FROM payees', []);
+  // Detach kept accounts from their v1 parents first (e.g. 5810 sat under 5800), or the delete breaks the FK.
+  for (const s of MM_SYSTEM) {
+    db.runSync('UPDATE accounts SET name = ?, icon = ?, parent_id = NULL, sort_order = 999 WHERE code = ?', [s.name, s.icon, s.code]);
+  }
+  db.runSync(`DELETE FROM accounts WHERE code NOT IN (${keep.map(() => '?').join(', ')})`, keep);
+  const now = nowStamp();
+  const idByCode = new Map<string, number>();
+  MM_CHART.forEach((a, i) => {
+    const parentId = a.parent ? idByCode.get(a.parent) ?? null : null;
+    const g = a.group ? groupInfo(a.group) : null;
+    const res = db.runSync(
+      `INSERT INTO accounts (code, name, type, subtype, parent_id, currency, is_placeholder, icon, grp, sort_order, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+      [a.code, a.name, a.type, g?.subtype ?? 'general', parentId, baseCurrency, a.icon, a.group ?? null, i, now]
+    );
+    idByCode.set(a.code, res.lastInsertRowId);
+  });
+}
+
+/** Accounts the app relies on by code. They never appear as categories or in the Accounts tab. */
 export const SYSTEM_CODES = {
   openingEquity: '3000',
   retainedEarnings: '3100',
@@ -79,6 +191,12 @@ export const SYSTEM_CODES = {
   fxLoss: '5900',
   bankCharges: '5810',
 } as const;
+
+const SYSTEM_CODE_SET = new Set<string>(Object.values(SYSTEM_CODES));
+
+export function isSystemAccount(a: { code: string }): boolean {
+  return SYSTEM_CODE_SET.has(a.code);
+}
 
 export function seedChartOfAccounts(db: Db, baseCurrency: string): void {
   const now = nowStamp();
