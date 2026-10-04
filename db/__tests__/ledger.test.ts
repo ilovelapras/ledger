@@ -109,6 +109,28 @@ describe('schema and seed', () => {
     expect(getSettings(db).baseCurrency).toBe('SGD');
   });
 
+  it('sets aside tables from the unversioned prototype database instead of failing', () => {
+    const db = createTestDb({ migrate: false });
+    // Schema created by the earlier prototype (no user_version, REAL money, clashing index names).
+    db.execSync(`
+      CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+        type TEXT NOT NULL, parent_id INTEGER REFERENCES accounts(id), is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT);
+      CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, description TEXT NOT NULL,
+        reference TEXT, created_at TEXT);
+      CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, transaction_id INTEGER REFERENCES transactions(id),
+        account_id INTEGER REFERENCES accounts(id), debit REAL DEFAULT 0, credit REAL DEFAULT 0);
+      CREATE INDEX idx_accounts_type ON accounts(type);
+      CREATE INDEX idx_entries_account ON entries(account_id);
+      CREATE INDEX idx_transactions_date ON transactions(date);
+      INSERT INTO accounts (code, name, type) VALUES ('1000', 'Cash', 'asset');
+    `);
+    migrate(db);
+    expect(listAccounts(db).length).toBeGreaterThan(40);
+    expect(db.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM legacy_accounts', [])!.n).toBe(1);
+    expect(getSettings(db).baseCurrency).toBe('SGD');
+    migrate(db); // second launch is a no-op
+  });
+
   it('changes base currency before any transactions only', () => {
     const { db, a } = setup();
     setBaseCurrency(db, 'MYR');

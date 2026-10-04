@@ -103,12 +103,42 @@ const MIGRATIONS: ((db: Db) => void)[] = [
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
+const LEGACY_TABLES = ['accounts', 'transactions', 'entries'];
+
+/**
+ * An earlier prototype of the app created `ledger.db` without a schema version (REAL money columns,
+ * no currency/subtype). Rename its tables to legacy_* (kept, not deleted) and drop its indexes,
+ * whose names clash with ours, so a fresh v1 schema can be created.
+ */
+function setAsideUnversionedTables(db: Db): void {
+  const existing = db
+    .getAllSync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${LEGACY_TABLES.map(() => '?').join(', ')})`,
+      LEGACY_TABLES
+    )
+    .map((r) => r.name);
+  if (existing.length === 0) return;
+  db.withTransactionSync(() => {
+    const indexes = db.getAllSync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL AND tbl_name IN (${existing.map(() => '?').join(', ')})`,
+      existing
+    );
+    for (const i of indexes) db.execSync(`DROP INDEX IF EXISTS "${i.name}"`);
+    for (const t of existing) {
+      let target = `legacy_${t}`;
+      for (let n = 2; db.getFirstSync('SELECT 1 FROM sqlite_master WHERE name = ?', [target]); n++) target = `legacy_${t}_${n}`;
+      db.execSync(`ALTER TABLE "${t}" RENAME TO "${target}"`);
+    }
+  });
+}
+
 /** Bring the database up to the latest schema. Safe to call on every launch. */
 export function migrate(db: Db): void {
   db.execSync('PRAGMA journal_mode = WAL;');
   db.execSync('PRAGMA foreign_keys = ON;');
   const row = db.getFirstSync<{ user_version: number }>('PRAGMA user_version', []);
   let version = row?.user_version ?? 0;
+  if (version === 0) setAsideUnversionedTables(db);
   while (version < MIGRATIONS.length) {
     const step = MIGRATIONS[version];
     db.withTransactionSync(() => {

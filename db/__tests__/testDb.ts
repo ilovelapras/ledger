@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Db, Param } from '../client';
 import { migrate } from '../schema';
 
-export function createTestDb(): Db {
+export function createTestDb(opts: { migrate?: boolean } = {}): Db {
   const raw = new DatabaseSync(':memory:');
   const db: Db = {
     execSync: (sql) => raw.exec(sql),
@@ -25,6 +25,6 @@ export function createTestDb(): Db {
       }
     },
   };
-  migrate(db);
+  if (opts.migrate !== false) migrate(db);
   return db;
 }
