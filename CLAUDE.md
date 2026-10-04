@@ -1,19 +1,20 @@
-# Ledger - Personal Finance App (Double-Entry Accounting)
+# Ledger - Personal Expense Tracker (Money Manager style, double-entry underneath)
 
 ## Project Context
-- **Platform**: iOS app developed on Windows 11
+- **Platform**: iOS app developed on Windows 11 (also tested on Android via Expo Go)
 - **Target**: Personal use only (no App Store submission)
 - **Cost constraint**: Free development and ongoing usage
 - **Distribution**: Expo Dev Client + EAS Build (free tier) + AltStore/Sideloadly on Windows
 
 ## User Requirements
-- **Accounting model**: Double-entry (proper debits/credits, chart of accounts, balanced books)
-- **Books for**: Personal finances, kept by an accountant (detail is welcome)
-- **Currency**: One base (reporting) currency chosen at first launch; balance-sheet accounts may be held in foreign currencies
-- **Tax**: None (no GST/VAT handling)
+- **What it is**: A personal expense tracker that works like **Money Manager (Realbyte)**
+  (https://play.google.com/store/apps/details?id=com.realbyteapps.moneymanagerfree). Follow its screens and flows.
+- **Who uses it**: An accountant, so sound accounting principles apply *inside* a good expense tracker — but don't expose
+  accountant tooling (journals, trial balance, reconciliation) in the UI unless asked.
+- **Accounting model**: Double-entry under the hood (every entry balances; income/expense = P&L, accounts = balance sheet)
+- **Currency**: Main currency chosen at first launch; accounts may be held in other currencies (sub-currencies) with a rate
+- **Tax**: None
 - **Database**: Local-first, offline (SQLite via expo-sqlite)
-- **Core features**: Payments, receipts, transfers to/from banks, journals; Balance Sheet, Profit & Loss, Trial Balance, ledgers
-- **Future**: Camera/OCR for receipts (deferred)
 - **React/TS experience**: Some experience
 
 ## Technical Stack
@@ -24,8 +25,10 @@
 | Database | expo-sqlite (synchronous API via `SQLiteProvider`) |
 | State | Zustand (`version` counter bumped after writes) |
 | Forms | React Hook Form + Zod |
-| Styling | NativeWind 4 (Tailwind CSS v3) |
-| Icons | expo-symbols (SF Symbols) |
+| Styling | NativeWind 4 (Tailwind CSS v3); colours in `components/mm/theme.ts` |
+| Icons | `@expo/vector-icons` Ionicons (iOS + Android); emoji for categories/accounts |
+| Charts | react-native-svg, hand-drawn (`components/mm/Charts.tsx`) — no chart library |
+| Photos / lock | expo-image-picker, expo-file-system, expo-secure-store, expo-local-authentication |
 | Tests | Jest 29 + Node's built-in `node:sqlite` (real SQL, no device needed) |
 | Build | EAS Build (free tier: 30 min/mo) |
 | Install | AltStore (Windows) - auto-refresh on WiFi |
@@ -34,116 +37,102 @@ Read AGENTS.md: check the versioned Expo docs (https://docs.expo.dev/versions/v5
 
 ## Money rules (important)
 - **All amounts are integers in minor units** (cents). Never store or add floats. `domain/money.ts` parses text → cents without floating point.
-- `entries.debit/credit` are in the **base currency**. `entries.fx_amount` is the amount in the account's own currency, `fx_rate` = base units per 1 foreign unit (TEXT).
-- Income, expense and equity accounts are always in the base currency.
+- `entries.debit/credit` are in the **main currency**. `entries.fx_amount` is the amount in the account's own currency,
+  `fx_rate` = main-currency units per 1 foreign unit (TEXT).
+- Income/expense categories are always in the main currency.
 
-## Data Model (SQLite, `db/schema.ts`, versioned with `PRAGMA user_version`)
+## How Money Manager concepts map to the engine
+| Money Manager | Engine |
+|---|---|
+| Expense / Income / Transfer | transaction `kind` payment / receipt / transfer (builders in `domain/posting.ts`) |
+| Category › subcategory | income/expense accounts, 2 levels, `icon` emoji, `sort_order` |
+| Accounts tab groups (Cash, Accounts, Card, Debit Card, Savings, Top-Up/Prepaid, Investments, Overdrafts, Loan, Insurance, Others) | asset/liability accounts with `grp` (`db/seed.ts` `ACCOUNT_GROUPS`; Card/Overdrafts/Loan are liabilities) |
+| Account initial balance | `opening` transaction dated 1970-01-01 vs 3000 Opening Balance Equity (never income) |
+| Note / Description | `transactions.description` / `memo` |
+| Delete | soft delete = `voidTransaction` (hidden everywhere, kept in `audit_log`) |
+| Repeat | `recurrences` + `postDueRecurrences()` on every launch (catch-up, idempotent) |
+| Instalments (card) | N monthly payment transactions, `installment` = "k/N" |
+| Favourites (bookmarks) | `favorites.template_json` (entry-form values without date) |
+| Budget | `budgets` (month '' = every month, 'YYYY-MM' = override) per main expense category |
+| Monthly start date | setting `month_start_day` (1–28); `domain/periods.ts` |
+System accounts (`SYSTEM_CODES`): 3000 Opening Balance Equity, 3100 Retained Earnings, 4900 Exchange Gain, 5810 Fees, 5900 Exchange Loss — hidden from category/account lists.
 
+## Data Model (`db/schema.ts`, versioned with `PRAGMA user_version`; currently v2)
 ```
-settings        key, value                      base_currency, owner_name, lock_date, onboarded, seq_<kind>
-accounts        code (unique), name, type, subtype (bank|cash|credit_card|loan|investment|receivable|payable|property|general),
-                parent_id, currency, is_placeholder (header, not postable), institution, account_no, notes, is_active
-payees          name (unique, nocase), default_account_id (learned from last use), notes
-transactions    date, kind (payment|receipt|transfer|journal|opening|reversal), reference (PAY-000001…), payee_id,
-                description, memo, status (posted|void), void_reason, reverses_id, created_at, updated_at
-entries         transaction_id, line_no, account_id, debit, credit (INTEGER base cents, CHECK one-sided),
-                currency, fx_amount, fx_rate, memo, cleared (uncleared|cleared|reconciled), reconciliation_id
-reconciliations account_id, statement_date, statement_balance, completed_at
-audit_log       ts, action, entity, entity_id, before_json, after_json
+settings        key/value: base_currency, onboarded, month_start_day, week_start, passcode_enabled, biometric_enabled,
+                last_money_account, seq_<kind>
+accounts        code (internal, auto), name, type, subtype, parent_id, currency, is_placeholder, icon, grp, sort_order,
+                statement_day, payment_day, payment_account_id, include_in_totals, notes, is_active
+transactions    date, time, kind, reference, description, memo, status (posted|void), recurrence_id, installment, …
+entries         transaction_id, line_no, account_id, debit, credit (INTEGER main-currency cents, one-sided CHECK),
+                currency, fx_amount, fx_rate, memo, cleared
+budgets         account_id, month ('' | 'YYYY-MM'), amount
+recurrences     kind, template_json, freq (daily|weekly|biweekly|monthly|month_end|yearly), start_date, end_date, posted_count, active
+favorites       name, kind, template_json, sort_order
+attachments     transaction_id, uri (photo file in documents/receipts)
+payees, reconciliations, audit_log   (v1 engine tables; not shown in the UI)
 ```
-
-**Account Code Ranges**: 1xxx=Assets, 2xxx=Liabilities, 3xxx=Equity, 4xxx=Income, 5xxx=Expenses.
-**System accounts** (`db/seed.ts` `SYSTEM_CODES`): 3000 Opening Balance Equity, 3100 Retained Earnings, 4900 Exchange Gain, 5900 Exchange Loss, 5810 Bank Charges.
-
-## Posting rules (`db/transactions.ts`)
-- Debits = credits exactly (integer cents); ≥ 2 lines; no header/inactive accounts; line currency must match the account.
-- Nothing can be posted, edited or voided on/before the **lock date** (Settings).
-- Lines in a completed **reconciliation** are immutable (undo the reconciliation first).
-- Posted transactions are **voided** (kept, excluded from balances) or **reversed** (mirror entry on a new date), never deleted.
-- Every create/update/void/reverse writes `audit_log` (shown as History on the transaction screen).
-- FX: buying foreign currency books it at the base cost paid; money leaving a foreign account defaults to its average **book rate**
-  (`bookRate()`); selling at a different rate posts the difference to 4900/5900.
+v2 migration: fresh books get Money Manager's default categories + Cash / Bank Account / Card; books with transactions keep their chart.
+Unversioned prototype databases are set aside as `legacy_*` tables.
 
 ## App Structure (Expo Router)
 ```
 app/
-├── _layout.tsx              SQLiteProvider(onInit=migrate) + Stack
-├── global.css               NativeWind entry
-├── onboarding.tsx           First run: owner name + base currency
-├── (tabs)/_layout.tsx       Tabs; redirects to onboarding until set up
-├── (tabs)/index.tsx         Overview: net worth, month income/expense, bank & card balances, quick actions, recent
-├── (tabs)/transactions.tsx  Search (payee/description/ref/account/amount), filters (date, type, status, account), grouped by day
-├── (tabs)/accounts.tsx      Collapsible chart of accounts with balances (native + base currency)
-├── (tabs)/reports.tsx       Report list + general ledger account picker
-├── transaction/new.tsx      ?mode=payment|receipt|transfer|journal &accountId= &duplicate=
-├── transaction/[id].tsx     Lines, Edit / Duplicate / Reverse / Void, audit history
-├── transaction/edit/[id].tsx
-├── account/[id].tsx         Ledger with opening balance b/f, running balance, CSV export
-├── account/edit.tsx         Create/edit (?id=, ?type=), deactivate, delete if unused
-├── account/reconcile/[id].tsx  Statement date + balance, tick cleared lines, finish when difference = 0, undo last
-├── report/[type].tsx        balance-sheet | profit-loss (with previous-period comparison) | trial-balance | journal; CSV export
-├── opening.tsx              Opening balances (one 'opening' transaction, editable)
-├── payees.tsx               Rename, default category, delete
-└── settings.tsx             Owner, base currency, lock date, backup/restore JSON, journal CSV, erase all
+├── _layout.tsx                 SQLiteProvider(onInit: migrate + postDueRecurrences) → LockGate → Stack
+├── onboarding.tsx              Main currency → Accounts tab
+├── (tabs)/index.tsx            Trans.: month switcher, Income/Exp/Total, Daily | Calendar | Weekly | Monthly | Summary, search, + button
+├── (tabs)/stats.tsx            Stats: Weekly/Monthly/Annually, Stats (pie + list) | Budget (progress bars) | Note
+├── (tabs)/accounts.tsx         Assets / Liabilities / Total, accounts by group, card payable; hold to edit, + to add
+├── (tabs)/more.tsx             Categories, budgets, repeat, favourites, main currency, month/week start, passcode, backup/restore, CSV, erase
+├── transaction/new.tsx         ?mode=&date=&accountId=&toId=&amount=&copy=&favorite=
+├── transaction/[id].tsx        Edit in place, Copy, Delete, photo viewer
+├── account/[id].tsx            Monthly list with running balance; card statement + "Pay card"
+├── account/edit.tsx            Group, name, icon, currency, initial balance (+rate), card days/paid-from, include in totals
+├── stats/[id].tsx              Category drill-down: subcategories, 6-month bars, transactions
+└── settings/                   budgets, categories, repeat, favorites, passcode
 ```
 
 ## Code layout
-- `domain/` — pure TypeScript, unit-tested, no React/Expo imports
-  - `money.ts` parse/format/convert minor units, currency list
-  - `accounting.ts` normal balances, labels, account tree + roll-up
-  - `posting.ts` builders: payment, receipt, transfer (FX gain/loss, fee), journal, opening balance, reversal; `validateEntries`
-  - `reports.ts` balance sheet (retained + current-year earnings computed), P&L, trial balance, running ledger
-  - `txForm.ts` entry-form values ⇄ entry lines (edit/duplicate reload any transaction; falls back to journal layout)
-  - `dates.ts` ISO dates, range presets
-- `db/` — repositories taking a `Db` interface (`db/client.ts`); expo-sqlite's database satisfies it
-  - `schema.ts` migrations, `seed.ts` personal chart of accounts (~55 accounts), `settings.ts`, `accounts.ts`, `payees.ts`,
-    `transactions.ts`, `reports.ts`, `reconcile.ts`, `backup.ts` (JSON backup/restore, CSV), `audit.ts`
-  - `__tests__/` — integration tests on in-memory `node:sqlite` via `testDb.ts`
-- `hooks/useLedger.ts` — `useDb`, `useLedgerQuery(fn, deps)`, `useMutation()` (writes + refresh + error alert), `useSettings`
-- `components/` — `ui/` (Button, Card, Input, Select, DateField, Misc: MoneyText, Segmented, Chips, Badge, ListRow, Banner…),
-  `AccountPicker`, `DateRangeBar`, `forms/TransactionForm` (live posting preview; Save disabled until balanced)
-- `utils/share.ts` — write a temp file and open the iOS share sheet
+- `domain/` — pure TypeScript, unit-tested: `money`, `posting` (balanced lines), `txForm` (form ⇄ lines), `reports`,
+  `periods`, `recurrence` (+ instalment split), `card` (statement cycle), `budget`, `calc` (keypad), `accounting`, `dates`
+- `db/` — repositories taking a `Db` interface (`db/client.ts`): `transactions`, `moneyAccounts`, `categories`, `stats`,
+  `budgets`, `recurrences`, `favorites`, `attachments`, `backup`, `formContext`, plus v1 `reports`/`reconcile`/`payees`/`audit`
+- `components/mm/` — Money Manager UI: `EntryForm` (Income/Expense/Transfer, keypad, category grid, repeat, instalments,
+  favourites, photos), `Sheets`, `Keypad`, `Charts`, `Common` (period header, totals bar, list row, FAB), `LockGate`, `PromptModal`
+- `hooks/useLedger.ts` — `useDb`, `useLedgerQuery(fn, deps)`, `useMutation()`, `useSettings`
+- `utils/` — `share.ts` (temp file + share sheet), `photos.ts` (pick/copy/delete receipt photos)
 
 ## Progress So Far
-- [x] Expo SDK 57 project, dependencies aligned (`npx expo-doctor`: 21/21 checks pass)
-- [x] Schema v1 with integer money, constraints, audit log, reconciliation
-- [x] Domain logic + repositories with 46 passing tests (`npm test`)
-- [x] All screens above; `npx tsc --noEmit` clean; `npx expo export --platform ios` bundles
-- [ ] Tested on a real iPhone (Expo Go) — not yet done
+- [x] Double-entry engine with integer cents, multi-currency, audit trail, backup (v1)
+- [x] Schema v2 + Money Manager features: categories with icons, account groups, initial balances, card cycle,
+      repeat, instalments, favourites, budgets, photos, passcode/Face ID, month/week start
+- [x] Screens: Trans. (5 views + search), Stats (pie/budget/note + drill-down), Accounts, More, entry form
+- [x] 77 tests; `npx tsc --noEmit` clean; `npx expo-doctor` 21/21; iOS + Android bundles build
+- [x] Runs on an Android phone in Expo Go (onboarding, Accounts, Trans., Stats screens checked)
+- [ ] Full manual pass on iPhone (Expo Go)
 
 ## Next Steps
-1. Test on device via Expo Go → Dev Client → EAS Build
-2. Recurring/scheduled transactions
-3. Budgets by expense category
-4. Unrealised FX revaluation of foreign-currency balances at period end
-5. Bank statement CSV import (match to existing entries)
-6. Camera/OCR for receipts (deferred)
-7. Dark mode
+1. Manual test on iPhone; fix anything that looks off
+2. Dark mode
+3. Bank statement / CSV import
+4. Receipt OCR (deferred)
 
 ## Free Tier Constraints
 - EAS Build: 30 min/month (~2-3 iOS builds)
 - Apple Free Developer: 7-day cert expiry, 3 apps max, no push/background
 - AltStore: Weekly refresh (auto on same WiFi)
-- Workaround: Build locally on Mac if needed (not available)
-- Data is only on the phone: export a JSON backup regularly (Settings) — a reinstall can wipe it.
-
-## Key Accounting Logic
-- Every transaction must balance: Σ(debits) = Σ(credits)
-- Balance Sheet: Assets = Liabilities + Equity
-- P&L: Net Income = Income - Expenses → flows to Equity (Retained Earnings)
-- Trial Balance: All accounts with debit/credit/balance columns
-- Account normal balances: Assets/Expenses = Debit, Liabilities/Equity/Income = Credit
-- No closing entries are posted: the balance sheet shows prior years' net income as retained earnings and this calendar
-  year's as current year earnings.
+- Data is only on the phone: back up from More → Backup regularly (photos are not in backups).
 
 ## Known Issues
-- Windows PowerShell 5.1 does not support `&&`; chain commands with `;` (e.g. `git add -A; git commit -m "msg"`).
-- jest-expo is not used (its peer deps conflict with RN 0.86.x); tests cover `domain/` and `db/` only, not React components.
+- Windows PowerShell 5.1 does not support `&&`; chain with `;`. For commit messages with quotes use `git commit -F file`.
+- Face ID does not work inside Expo Go on iOS (needs a dev/EAS build); the PIN always works.
+- jest-expo is not used (peer-dep conflict with RN 0.86.x); tests cover `domain/` and `db/` only.
+- Expo Go's floating "Tools" button can cover the top-right header buttons while developing.
 
 ## How to Run
 ```powershell
 cd C:\Users\loois\ledger
 npm test                 # domain + database tests
 npx tsc --noEmit         # type-check
-npx expo start --clear   # scan the QR code with Expo Go on the iPhone
+npx expo start --clear   # scan the QR code with Expo Go (iPhone camera / Android Expo Go app)
 ```

@@ -1,5 +1,5 @@
 import { budgetSummary } from '../budget';
-import { evaluate, toAmountText } from '../calc';
+import { evaluate, pressKey, toAmountText } from '../calc';
 import { cardStatus, lastStatementClose, nextStatementClose, paymentDueAfter } from '../card';
 import { calendarGrid, monthsIn, periodContaining, periodLabel, shiftPeriod, weeksIn } from '../periods';
 import { dueOccurrences, occurrence, splitInstallments } from '../recurrence';
@@ -117,6 +117,17 @@ describe('calculator', () => {
     expect(evaluate('7+')).toBeNull();
     expect(evaluate('×7')).toBeNull();
     expect(evaluate('1÷0')).toBeNull();
+  });
+
+  it('keypad presses build valid amounts', () => {
+    const type = (keys: string[], cur = 'SGD') => keys.reduce((e, k) => pressKey(e, k, cur), '');
+    expect(type(['1', '2', '.', '5', '0', '9'])).toBe('12.50'); // third decimal ignored
+    expect(type(['0', '7'])).toBe('7');
+    expect(type(['.', '5'])).toBe('0.5');
+    expect(type(['1', '0', '+', '×', '2'])).toBe('10×2'); // operator replaced
+    expect(type(['1', '0', '0', '÷', '3', '='])).toBe('33.33');
+    expect(type(['5', '.'], 'JPY')).toBe('5');
+    expect(type(['9', '⌫', '4'])).toBe('4');
   });
 
   it('rounds results to currency decimals', () => {

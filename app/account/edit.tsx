@@ -1,249 +1,316 @@
-import React, { useEffect, useMemo } from 'react';
-import { Alert, ScrollView, Switch, Text, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ACCOUNT_TYPE_LABELS, ACCOUNT_TYPES, SUBTYPE_LABELS, SUBTYPES_BY_TYPE } from '../../domain/accounting';
-import { CURRENCIES } from '../../domain/money';
-import type { AccountSubtype, AccountType } from '../../domain/types';
-import { createAccount, deleteAccount, getAccount, setAccountActive, suggestCode, updateAccount } from '../../db/accounts';
+import { Ionicons } from '@expo/vector-icons';
+import { CURRENCIES, parseMoney, parseRate, toDecimalString } from '../../domain/money';
+import { getAccount } from '../../db/accounts';
+import {
+  createMoneyAccount,
+  getInitialBalance,
+  listMoneyAccounts,
+  removeMoneyAccount,
+  setInitialBalance,
+  updateMoneyAccount,
+} from '../../db/moneyAccounts';
+import { ACCOUNT_GROUPS, groupInfo, type AccountGroup } from '../../db/seed';
 import { useDb, useMutation, useSettings } from '../../hooks/useLedger';
-import { AccountPicker } from '../../components/AccountPicker';
-import { Button, Input, Segmented, Select } from '../../components/ui';
+import { ChoiceSheet } from '../../components/mm/Sheets';
+import { MM } from '../../components/mm/theme';
+
+const day = z
+  .string()
+  .regex(/^(|[1-9]|[12]\d|3[01])$/, 'Enter a day from 1 to 31');
 
 const schema = z.object({
-  type: z.enum(['asset', 'liability', 'equity', 'income', 'expense']),
-  subtype: z.enum(['bank', 'cash', 'credit_card', 'loan', 'investment', 'receivable', 'payable', 'property', 'general']),
-  parent_id: z.number().nullable(),
-  code: z.string().regex(/^\d{4,6}$/, '4–6 digits'),
-  name: z.string().trim().min(1, 'Required').max(80),
+  grp: z.string(),
+  name: z.string().trim().min(1, 'Enter a name').max(60),
+  icon: z.string().max(8),
   currency: z.string().length(3),
-  is_placeholder: z.boolean(),
-  institution: z.string().max(80),
-  account_no: z.string().max(8, 'Last 4 digits are enough'),
+  initial: z.string().refine((s) => s.trim() === '' || /^-?[\d,]*\.?\d*$/.test(s.trim()), 'Enter a number'),
+  rate: z.string(),
+  includeInTotals: z.boolean(),
+  statementDay: day,
+  paymentDay: day,
+  paymentAccountId: z.number().nullable(),
   notes: z.string().max(500),
 });
 type Values = z.infer<typeof schema>;
 
 export default function EditAccount() {
-  const { id, type: typeParam } = useLocalSearchParams<{ id?: string; type?: string }>();
+  const { id } = useLocalSearchParams<{ id?: string }>();
   const db = useDb();
   const mutate = useMutation();
   const { baseCurrency } = useSettings();
   const existing = useMemo(() => (id ? getAccount(db, Number(id)) : null), [db, id]);
+  const used = useMemo(
+    () => !!existing && db.getFirstSync<{ n: number }>(`SELECT COUNT(*) AS n FROM entries e JOIN transactions t ON t.id = e.transaction_id WHERE e.account_id = ? AND t.kind <> 'opening'`, [existing.id])!.n > 0,
+    [db, existing]
+  );
+  const init = useMemo(() => (existing ? getInitialBalance(db, existing.id) : { amount: 0, rate: null }), [db, existing]);
+  const payFrom = useMemo(() => listMoneyAccounts(db).filter((a) => a.type === 'asset'), [db]);
+  const [sheet, setSheet] = useState<'group' | 'currency' | 'payfrom' | null>(null);
 
-  const startType = (existing?.type ?? (ACCOUNT_TYPES.includes(typeParam as AccountType) ? typeParam : 'asset')) as AccountType;
-  const { control, handleSubmit, setValue, getValues } = useForm<Values>({
+  const { control, handleSubmit, setValue } = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: existing
-      ? {
-          type: existing.type,
-          subtype: existing.subtype,
-          parent_id: existing.parent_id,
-          code: existing.code,
-          name: existing.name,
-          currency: existing.currency,
-          is_placeholder: !!existing.is_placeholder,
-          institution: existing.institution ?? '',
-          account_no: existing.account_no ?? '',
-          notes: existing.notes ?? '',
-        }
-      : {
-          type: startType,
-          subtype: SUBTYPES_BY_TYPE[startType][0],
-          parent_id: null,
-          code: suggestCode(db, startType, null),
-          name: '',
-          currency: baseCurrency,
-          is_placeholder: false,
-          institution: '',
-          account_no: '',
-          notes: '',
-        },
+    defaultValues: {
+      grp: existing?.grp ?? 'accounts',
+      name: existing?.name ?? '',
+      icon: existing?.icon ?? '',
+      currency: existing?.currency ?? baseCurrency,
+      initial: init.amount ? toDecimalString(init.amount, existing?.currency ?? baseCurrency) : '',
+      rate: init.rate && init.rate !== '1' ? init.rate : '',
+      includeInTotals: existing ? !!existing.include_in_totals : true,
+      statementDay: existing?.statement_day ? String(existing.statement_day) : '',
+      paymentDay: existing?.payment_day ? String(existing.payment_day) : '',
+      paymentAccountId: existing?.payment_account_id ?? null,
+      notes: existing?.notes ?? '',
+    },
   });
-  const type = useWatch({ control, name: 'type' });
-  const subtype = useWatch({ control, name: 'subtype' });
-  const parentId = useWatch({ control, name: 'parent_id' });
-  const multiCurrency = type === 'asset' || type === 'liability';
+  const v = useWatch({ control }) as Values;
+  const group = groupInfo(v.grp);
+  const isCard = v.grp === 'card';
+  const foreign = v.currency !== baseCurrency;
 
-  // Keep code/subtype/currency consistent when type or parent changes on a new account.
-  useEffect(() => {
-    if (existing) return;
-    if (!SUBTYPES_BY_TYPE[type].includes(getValues('subtype'))) setValue('subtype', SUBTYPES_BY_TYPE[type][0]);
-    if (!multiCurrency) setValue('currency', baseCurrency);
-    setValue('code', suggestCode(db, type, parentId));
-  }, [type, parentId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const submit = handleSubmit((v) => {
-    const input = { ...v, subtype: v.subtype as AccountSubtype };
+  const submit = handleSubmit((vals) => {
+    const amount = vals.initial.trim() ? parseMoney(vals.initial, vals.currency) : 0;
+    if (amount == null) return Alert.alert('Initial balance', `Not a valid ${vals.currency} amount.`);
+    const rate = foreign ? parseRate(vals.rate) ?? undefined : undefined;
+    if (foreign && amount !== 0 && !rate) return Alert.alert('Exchange rate', `Enter how many ${baseCurrency} one ${vals.currency} is worth.`);
+    const input = {
+      name: vals.name,
+      grp: vals.grp as AccountGroup,
+      currency: vals.currency,
+      icon: vals.icon.trim() || null,
+      notes: vals.notes,
+      includeInTotals: vals.includeInTotals,
+      statementDay: vals.statementDay ? Number(vals.statementDay) : null,
+      paymentDay: vals.paymentDay ? Number(vals.paymentDay) : null,
+      paymentAccountId: vals.paymentAccountId,
+    };
     const ok = mutate((d) => {
-      if (existing) updateAccount(d, existing.id, input);
-      else createAccount(d, input);
+      const accId = existing ? (updateMoneyAccount(d, existing.id, input), existing.id) : createMoneyAccount(d, input);
+      setInitialBalance(d, accId, amount, rate);
       return true;
     });
     if (ok) router.back();
   });
 
   const remove = () =>
-    Alert.alert('Delete account?', 'Only possible for accounts that have never been used.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          if (mutate((d) => (deleteAccount(d, existing!.id), true), 'Could not delete')) router.dismissTo('/accounts');
+    Alert.alert(
+      used ? 'Hide account?' : 'Delete account?',
+      used ? 'It has transactions, so it will be hidden but kept in your history and totals for past periods.' : 'This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: used ? 'Hide' : 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            if (mutate((d) => removeMoneyAccount(d, existing!.id))) router.dismissTo('/accounts');
+          },
         },
-      },
-    ]);
-
-  const toggleActive = () => {
-    if (mutate((d) => (setAccountActive(d, existing!.id, !existing!.is_active), true))) router.back();
-  };
+      ]
+    );
 
   return (
-    <ScrollView className="flex-1 bg-gray-50" contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
-      <Stack.Screen options={{ title: existing ? 'Edit account' : 'New account' }} />
-      <Controller
-        control={control}
-        name="type"
-        render={({ field }) => (
-          <View>
-            <Text className="mb-1 text-sm font-medium text-gray-700">Type</Text>
-            <Segmented
-              options={ACCOUNT_TYPES.map((t) => ({ value: t, label: ACCOUNT_TYPE_LABELS[t].replace('Liabilities', 'Liab.') }))}
-              value={field.value}
-              onChange={(t) => {
-                field.onChange(t);
-                setValue('parent_id', null);
-              }}
-            />
-          </View>
-        )}
-      />
-      {SUBTYPES_BY_TYPE[type].length > 1 ? (
-        <Controller
-          control={control}
-          name="subtype"
-          render={({ field }) => (
-            <Select
-              label="Kind of account"
-              searchable={false}
-              options={SUBTYPES_BY_TYPE[type].map((s) => ({ value: s, label: SUBTYPE_LABELS[s] }))}
-              value={field.value}
-              onChange={field.onChange}
-              helperText="Bank, cash, card, loan and investment accounts appear as 'paid from / into' choices."
-            />
-          )}
-        />
-      ) : null}
-      <Controller
-        control={control}
-        name="parent_id"
-        render={({ field }) => (
-          <View>
-            <AccountPicker
-              label="Parent (optional)"
-              placeholder="Top level"
-              value={field.value}
-              onChange={field.onChange}
-              allowHeaders
-              filter={(a) => a.type === type && !!a.is_placeholder && a.id !== existing?.id}
-            />
-            {field.value != null ? (
-              <Text onPress={() => field.onChange(null)} className="mt-1 text-sm text-primary-700">
-                Move to top level
-              </Text>
-            ) : null}
-          </View>
-        )}
-      />
-      <View className="flex-row gap-3">
-        <View className="w-28">
-          <Controller
-            control={control}
-            name="code"
-            render={({ field, fieldState }) => (
-              <Input label="Code" value={field.value} onChangeText={field.onChange} keyboardType="number-pad" error={fieldState.error?.message} />
-            )}
-          />
-        </View>
-        <View className="flex-1">
+    <View className="flex-1 bg-white">
+      <Stack.Screen options={{ title: existing ? 'Edit account' : 'Add account' }} />
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 32 }}>
+        <Pick label="Group" value={`${group.icon} ${group.label}`} onPress={() => setSheet('group')} />
+        <Field label="Name">
           <Controller
             control={control}
             name="name"
             render={({ field, fieldState }) => (
-              <Input label="Name" value={field.value} onChangeText={field.onChange} placeholder="e.g. DBS Multiplier" error={fieldState.error?.message} />
+              <TextInput
+                value={field.value}
+                onChangeText={field.onChange}
+                placeholder={fieldState.error?.message ?? 'e.g. DBS Multiplier'}
+                placeholderTextColor={fieldState.error ? MM.expense : '#9ca3af'}
+                className="flex-1 text-right text-base text-gray-900"
+              />
+            )}
+          />
+        </Field>
+        <Field label="Icon">
+          <Controller
+            control={control}
+            name="icon"
+            render={({ field }) => (
+              <TextInput
+                value={field.value}
+                onChangeText={field.onChange}
+                placeholder={group.icon}
+                className="flex-1 text-right text-xl"
+                maxLength={8}
+              />
+            )}
+          />
+        </Field>
+        <Pick
+          label="Currency"
+          value={v.currency}
+          onPress={() => (used ? Alert.alert('Currency', "Currency can't change once the account has transactions.") : setSheet('currency'))}
+        />
+        <Field label={group.type === 'liability' ? 'Amount owed' : 'Initial balance'}>
+          <Controller
+            control={control}
+            name="initial"
+            render={({ field, fieldState }) => (
+              <TextInput
+                value={field.value}
+                onChangeText={field.onChange}
+                placeholder={fieldState.error?.message ?? '0.00'}
+                placeholderTextColor={fieldState.error ? MM.expense : '#9ca3af'}
+                keyboardType="numbers-and-punctuation"
+                className="flex-1 text-right text-base text-gray-900"
+              />
+            )}
+          />
+          <Text className="ml-2 text-sm text-gray-500">{v.currency}</Text>
+        </Field>
+        {foreign ? (
+          <Field label="Rate">
+            <Text className="mr-2 text-xs text-gray-500">{`1 ${v.currency} = ? ${baseCurrency}`}</Text>
+            <Controller
+              control={control}
+              name="rate"
+              render={({ field }) => (
+                <TextInput value={field.value} onChangeText={field.onChange} keyboardType="decimal-pad" placeholder="1.35" className="w-24 text-right text-base text-gray-900" />
+              )}
+            />
+          </Field>
+        ) : null}
+
+        {isCard ? (
+          <>
+            <Text className="px-4 pb-1 pt-4 text-xs font-semibold uppercase text-gray-500">Card</Text>
+            <DayField control={control} name="statementDay" label="Statement day" />
+            <DayField control={control} name="paymentDay" label="Payment due day" />
+            <Pick
+              label="Paid from"
+              value={payFrom.find((a) => a.id === v.paymentAccountId)?.name ?? 'Choose'}
+              onPress={() => setSheet('payfrom')}
+            />
+          </>
+        ) : null}
+
+        <Field label="Include in totals">
+          <Controller control={control} name="includeInTotals" render={({ field }) => <Switch value={field.value} onValueChange={field.onChange} />} />
+        </Field>
+        <View className="border-b border-gray-100 px-4 py-3">
+          <Controller
+            control={control}
+            name="notes"
+            render={({ field }) => (
+              <TextInput value={field.value} onChangeText={field.onChange} placeholder="Description" placeholderTextColor="#9ca3af" multiline className="min-h-[48px] text-base text-gray-900" />
             )}
           />
         </View>
+        <Text className="px-4 pt-3 text-xs text-gray-500">
+          {group.type === 'liability'
+            ? 'Cards, overdrafts and loans hold money you owe. Enter what you owed before your first transaction here.'
+            : 'Enter what the account held before your first transaction here. It counts towards your balance, not your income.'}
+        </Text>
+
+        {existing ? (
+          <Pressable onPress={remove} className="mx-4 mt-6 items-center rounded-lg border py-3" style={{ borderColor: MM.expense }}>
+            <Text className="text-base font-medium" style={{ color: MM.expense }}>
+              {used ? 'Hide account' : 'Delete account'}
+            </Text>
+          </Pressable>
+        ) : null}
+      </ScrollView>
+      <View className="border-t border-gray-200 px-4 pb-8 pt-3">
+        <Pressable onPress={submit} className="h-12 items-center justify-center rounded-lg" style={{ backgroundColor: MM.accent }}>
+          <Text className="text-base font-semibold text-white">Save</Text>
+        </Pressable>
       </View>
-      {multiCurrency ? (
-        <Controller
-          control={control}
-          name="currency"
-          render={({ field }) => (
-            <Select
-              label="Currency"
-              options={CURRENCIES.map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` }))}
-              value={field.value}
-              onChange={field.onChange}
-              helperText={field.value !== baseCurrency ? `Balances are kept in ${field.value} and converted to ${baseCurrency} for reports.` : undefined}
-            />
-          )}
-        />
-      ) : null}
-      {subtype === 'bank' || subtype === 'credit_card' || subtype === 'loan' || subtype === 'investment' ? (
-        <View className="flex-row gap-3">
-          <View className="flex-1">
-            <Controller
-              control={control}
-              name="institution"
-              render={({ field }) => <Input label="Bank / institution" value={field.value} onChangeText={field.onChange} placeholder="e.g. DBS" />}
-            />
-          </View>
-          <View className="w-28">
-            <Controller
-              control={control}
-              name="account_no"
-              render={({ field, fieldState }) => (
-                <Input label="Last 4" value={field.value} onChangeText={field.onChange} keyboardType="number-pad" maxLength={8} error={fieldState.error?.message} />
-              )}
-            />
-          </View>
-        </View>
-      ) : null}
+
+      <ChoiceSheet
+        visible={sheet === 'group'}
+        title="Group"
+        value={v.grp}
+        options={ACCOUNT_GROUPS.map((g) => ({
+          value: g.key,
+          label: `${g.icon}  ${g.label}`,
+          sub: g.type === 'liability' ? 'Money you owe' : undefined,
+        }))}
+        onClose={() => setSheet(null)}
+        onPick={(g) => {
+          if (used && groupInfo(g).type !== groupInfo(v.grp).type) {
+            Alert.alert('Group', "This account has transactions, so it can't switch between money you have and money you owe.");
+          } else setValue('grp', g);
+          setSheet(null);
+        }}
+      />
+      <ChoiceSheet
+        visible={sheet === 'currency'}
+        title="Currency"
+        value={v.currency}
+        options={CURRENCIES.map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` }))}
+        onClose={() => setSheet(null)}
+        onPick={(c) => {
+          setValue('currency', c);
+          setSheet(null);
+        }}
+      />
+      <ChoiceSheet
+        visible={sheet === 'payfrom'}
+        title="Card paid from"
+        value={v.paymentAccountId ?? -1}
+        options={[{ value: -1, label: 'Not set' }, ...payFrom.map((a) => ({ value: a.id, label: a.name }))]}
+        onClose={() => setSheet(null)}
+        onPick={(idv) => {
+          setValue('paymentAccountId', idv === -1 ? null : idv);
+          setSheet(null);
+        }}
+      />
+    </View>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View className="min-h-[52px] flex-row items-center border-b border-gray-100 px-4">
+      <Text className="w-36 text-sm text-gray-500">{label}</Text>
+      <View className="flex-1 flex-row items-center justify-end">{children}</View>
+    </View>
+  );
+}
+
+function Pick({ label, value, onPress }: { label: string; value: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} className="active:bg-gray-50">
+      <Field label={label}>
+        <Text className="text-base text-gray-900">{value}</Text>
+        <Ionicons name="chevron-forward" size={16} color="#9ca3af" style={{ marginLeft: 6 }} />
+      </Field>
+    </Pressable>
+  );
+}
+
+function DayField({ control, name, label }: { control: ReturnType<typeof useForm<Values>>['control']; name: 'statementDay' | 'paymentDay'; label: string }) {
+  return (
+    <Field label={label}>
       <Controller
         control={control}
-        name="is_placeholder"
-        render={({ field }) => (
-          <View className="flex-row items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-3">
-            <View className="mr-3 flex-1">
-              <Text className="text-base text-gray-900">Header account</Text>
-              <Text className="text-xs text-gray-500">Groups sub-accounts; nothing can be posted to it directly.</Text>
-            </View>
-            <Switch value={field.value} onValueChange={field.onChange} />
-          </View>
+        name={name}
+        render={({ field, fieldState }) => (
+          <TextInput
+            value={field.value}
+            onChangeText={field.onChange}
+            keyboardType="number-pad"
+            maxLength={2}
+            placeholder={fieldState.error ? '1–31' : '—'}
+            placeholderTextColor={fieldState.error ? MM.expense : '#9ca3af'}
+            className="w-16 text-right text-base text-gray-900"
+          />
         )}
       />
-      <Controller
-        control={control}
-        name="notes"
-        render={({ field }) => <Input label="Notes" value={field.value} onChangeText={field.onChange} multiline className="min-h-[64px]" />}
-      />
-      <Button size="lg" onPress={submit}>
-        {existing ? 'Save changes' : 'Create account'}
-      </Button>
-      {existing ? (
-        <>
-          <Button variant="outline" onPress={toggleActive}>
-            {existing.is_active ? 'Deactivate (hide from pickers)' : 'Reactivate'}
-          </Button>
-          <Button variant="ghost" onPress={remove}>
-            <Text className="font-semibold text-red-600">Delete account</Text>
-          </Button>
-        </>
-      ) : null}
-    </ScrollView>
+      <Text className="ml-2 text-sm text-gray-500">of the month</Text>
+    </Field>
   );
 }

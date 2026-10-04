@@ -1,62 +1,69 @@
 import React, { useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { CURRENCIES } from '../domain/money';
 import { setBaseCurrency, setSetting } from '../db/settings';
 import { useMutation, useSettings } from '../hooks/useLedger';
-import { Button, Card, Input, Select } from '../components/ui';
+import { ChoiceSheet } from '../components/mm/Sheets';
+import { MM } from '../components/mm/theme';
 
 export default function Onboarding() {
   const settings = useSettings();
   const mutate = useMutation();
-  const [name, setName] = useState(settings.ownerName);
   const [currency, setCurrency] = useState(settings.baseCurrency);
+  const [picking, setPicking] = useState(false);
 
-  const finish = (next: 'opening' | 'home') => {
+  const finish = () => {
     const ok = mutate((db) => {
       setBaseCurrency(db, currency);
-      setSetting(db, 'owner_name', name.trim());
       setSetting(db, 'onboarded', '1');
       return true;
     });
     if (!ok) return;
-    router.replace('/');
-    if (next === 'opening') router.push('/opening');
+    router.replace('/accounts');
   };
 
+  const name = CURRENCIES.find((c) => c.code === currency)?.name ?? currency;
   return (
-    <ScrollView className="flex-1 bg-gray-50" contentContainerStyle={{ padding: 16, gap: 16 }} keyboardShouldPersistTaps="handled">
+    <ScrollView className="flex-1 bg-white" contentContainerStyle={{ padding: 24, gap: 20 }}>
       <View>
-        <Text className="text-2xl font-bold text-gray-900">Set up your books</Text>
-        <Text className="mt-1 text-base text-gray-600">
-          Double-entry ledger for personal finances. Everything stays on this device.
+        <Text className="text-3xl font-bold text-gray-900">Ledger</Text>
+        <Text className="mt-2 text-base leading-6 text-gray-600">
+          Track income, expenses and transfers across cash, bank accounts and cards. Everything stays on this phone.
         </Text>
       </View>
-      <Card>
-        <View className="gap-4">
-          <Input label="Whose books are these?" value={name} onChangeText={setName} placeholder="e.g. Jane Tan" />
-          <Select
-            label="Base (reporting) currency"
-            options={CURRENCIES.map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` }))}
-            value={currency}
-            onChange={setCurrency}
-            helperText="Reports are in this currency. Bank accounts can still be held in other currencies. This can't change after you record transactions."
-          />
-        </View>
-      </Card>
-      <Card>
-        <Text className="text-base font-semibold text-gray-900">What's included</Text>
-        <Text className="mt-1 text-sm leading-5 text-gray-600">
-          A personal chart of accounts (bank, cards, loans, income and expense categories) you can edit, plus payments, receipts,
-          transfers, journals, bank reconciliation, and Balance Sheet, P&L, Trial Balance and ledger reports.
+      <View>
+        <Text className="mb-2 text-sm font-medium text-gray-700">Main currency</Text>
+        <Pressable onPress={() => setPicking(true)} className="flex-row items-center justify-between rounded-lg border border-gray-300 px-4 py-3">
+          <Text className="text-base text-gray-900">{`${currency} — ${name}`}</Text>
+          <Text className="text-sm" style={{ color: MM.accent }}>
+            Change
+          </Text>
+        </Pressable>
+        <Text className="mt-2 text-xs text-gray-500">
+          Totals and charts use this currency. Accounts can be in other currencies too. It can't change after your first entry.
         </Text>
-      </Card>
-      <Button size="lg" onPress={() => finish('opening')}>
-        Continue to opening balances
-      </Button>
-      <Button variant="ghost" onPress={() => finish('home')}>
-        Skip for now
-      </Button>
+      </View>
+      <View className="rounded-xl bg-gray-50 p-4">
+        <Text className="text-sm font-semibold text-gray-900">Next</Text>
+        <Text className="mt-1 text-sm leading-5 text-gray-600">
+          You'll start with Cash, Bank Account and Card. Tap and hold one to enter its current balance, or tap + to add your own.
+        </Text>
+      </View>
+      <Pressable onPress={finish} className="h-12 items-center justify-center rounded-lg" style={{ backgroundColor: MM.accent }}>
+        <Text className="text-base font-semibold text-white">Start</Text>
+      </Pressable>
+      <ChoiceSheet
+        visible={picking}
+        title="Main currency"
+        value={currency}
+        options={CURRENCIES.map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` }))}
+        onClose={() => setPicking(false)}
+        onPick={(c) => {
+          setCurrency(c);
+          setPicking(false);
+        }}
+      />
     </ScrollView>
   );
 }

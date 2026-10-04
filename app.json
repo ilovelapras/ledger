@@ -40,7 +40,8 @@
         {
           "faceIDPermission": "Ledger uses Face ID to unlock your books."
         }
-      ]
+      ],
+      "expo-font"
     ],
     "scheme": "ledger"
   }

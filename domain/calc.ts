@@ -1,5 +1,7 @@
 // Calculator keypad support: evaluate "12.50+3×2" style input without eval().
 
+import { currencyDecimals } from './money';
+
 export type CalcOp = '+' | '−' | '×' | '÷';
 const OPS: Record<CalcOp, { prec: number; fn: (a: number, b: number) => number }> = {
   '+': { prec: 1, fn: (a, b) => a + b },
@@ -44,6 +46,33 @@ export function evaluate(expr: string): number | null {
 
 export function hasOperator(expr: string): boolean {
   return /[+−×÷]/.test(expr.slice(1));
+}
+
+/** Apply one keypad press to the expression text. */
+export function pressKey(expr: string, key: string, currency: string): string {
+  const decimals = currencyDecimals(currency);
+  if (key === '⌫') return expr.slice(0, -1);
+  if (key === 'C') return '';
+  if (key === '=') {
+    const v = evaluate(expr);
+    return v == null || v < 0 ? expr : toAmountText(v, decimals);
+  }
+  if (isOp(key)) {
+    if (!expr) return expr;
+    // Replace a trailing operator instead of stacking two.
+    return isOp(expr.slice(-1)) ? expr.slice(0, -1) + key : expr + key;
+  }
+  const lastNumber = expr.split(/[+−×÷]/).pop() ?? '';
+  if (key === '.') {
+    if (decimals === 0 || lastNumber.includes('.')) return expr;
+    return expr + (lastNumber === '' ? '0.' : '.');
+  }
+  // Digits: respect currency decimals and avoid leading zeros.
+  const frac = lastNumber.split('.')[1];
+  if (frac !== undefined && frac.length >= decimals) return expr;
+  if (lastNumber === '0') return expr.slice(0, -1) + key;
+  if (lastNumber.replace('.', '').length >= 12) return expr;
+  return expr + key;
 }
 
 /** Round a calculator result to a plain decimal string with the given decimals (for parseMoney). */

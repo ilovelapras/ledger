@@ -1,19 +1,17 @@
 import React from 'react';
-import { Pressable, type ColorValue } from 'react-native';
-import { Redirect, router } from 'expo-router';
+import type { ComponentProps } from 'react';
+import type { ColorValue } from 'react-native';
+import { Redirect } from 'expo-router';
 import { Tabs } from 'expo-router/js-tabs';
-import { SymbolView, type SymbolViewProps } from 'expo-symbols';
+import { Ionicons } from '@expo/vector-icons';
 import { useSettings } from '../../hooks/useLedger';
+import { MM } from '../../components/mm/theme';
 
-function icon(name: SymbolViewProps['name']) {
-  return ({ color }: { color: ColorValue }) => <SymbolView name={name} tintColor={color} size={24} />;
-}
+type IconName = ComponentProps<typeof Ionicons>['name'];
 
-function NewButton() {
-  return (
-    <Pressable onPress={() => router.push('/transaction/new')} hitSlop={12} className="px-4" accessibilityLabel="New entry">
-      <SymbolView name="plus.circle.fill" tintColor="#15803d" size={26} />
-    </Pressable>
+function icon(name: IconName, focusedName: IconName) {
+  return ({ color, focused, size }: { color: ColorValue; focused: boolean; size: number }) => (
+    <Ionicons name={focused ? focusedName : name} color={color} size={size} />
   );
 }
 
@@ -24,26 +22,16 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: '#15803d',
+        tabBarActiveTintColor: MM.accent,
+        tabBarInactiveTintColor: '#9ca3af',
         headerTitleStyle: { color: '#111827' },
-        headerRight: () => <NewButton />,
+        headerShadowVisible: false,
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Overview',
-          tabBarIcon: icon('house'),
-          headerLeft: () => (
-            <Pressable onPress={() => router.push('/settings')} hitSlop={12} className="px-4" accessibilityLabel="Settings">
-              <SymbolView name="gearshape" tintColor="#15803d" size={22} />
-            </Pressable>
-          ),
-        }}
-      />
-      <Tabs.Screen name="transactions" options={{ title: 'Transactions', tabBarIcon: icon('list.bullet.rectangle') }} />
-      <Tabs.Screen name="accounts" options={{ title: 'Accounts', tabBarIcon: icon('building.columns') }} />
-      <Tabs.Screen name="reports" options={{ title: 'Reports', tabBarIcon: icon('chart.bar.doc.horizontal') }} />
+      <Tabs.Screen name="index" options={{ title: 'Trans.', tabBarIcon: icon('book-outline', 'book') }} />
+      <Tabs.Screen name="stats" options={{ title: 'Stats', tabBarIcon: icon('pie-chart-outline', 'pie-chart') }} />
+      <Tabs.Screen name="accounts" options={{ title: 'Accounts', tabBarIcon: icon('wallet-outline', 'wallet') }} />
+      <Tabs.Screen name="more" options={{ title: 'More', tabBarIcon: icon('ellipsis-horizontal-circle-outline', 'ellipsis-horizontal-circle') }} />
     </Tabs>
   );
 }
